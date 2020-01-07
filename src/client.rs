@@ -57,7 +57,7 @@ impl Client {
 		Client { host: String::from(host), id: 1 }
 	}
 
-	fn send<T: serde::Serialize, R: serde::de::DeserializeOwned>(&self, method: &str, params: T) -> Result<R, Error> {
+	async fn send<T: serde::Serialize, R: serde::de::DeserializeOwned>(&self, method: &str, params: T) -> Result<R, Error> {
 		let body = serde_json::to_vec(&RPCRequest {
 			jsonrpc: String::from("2.0"),
 			method: String::from(method),
@@ -65,7 +65,7 @@ impl Client {
 			params: &params
 		})?;
 
-		match isahc::post(&self.host, body)?.json()? {
+		match isahc::post_async(&self.host, body).await?.json()? {
 			RPCResponse { result: Some(result), error: None, .. } => Ok(result),
 			RPCResponse { result: None, error: Some(error), .. } => Err(Error::RPC(error)),
 			_ => Err(Error::InvalidResponse),
@@ -89,8 +89,8 @@ impl Client {
 	/// let client = Client::new("http://seed-host.com:8648");
 	/// let result = client.accounts();
 	/// ```
-	pub fn accounts(&self) -> Result<Vec<super::primitives::Account>, Error>{
-		self.send("accounts", ())
+	pub async fn accounts(&self) -> Result<Vec<super::primitives::Account>, Error>{
+		Ok(self.send("accounts", ()).await?)
 	}
 
 	/*
