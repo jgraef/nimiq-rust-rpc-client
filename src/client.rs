@@ -2,40 +2,48 @@ use isahc::prelude::*;
 
 use super::primitives;
 
+pub enum Error {
+	RPC(RPCError),
+	HTTP(isahc::Error),
+	JSON(serde_json::Error),
+	InvalidResponse
+}
+
+impl From<serde_json::Error> for Error {
+	fn from(e: serde_json::Error) -> Self {
+		Self::JSON(e)
+	}
+}
+
+impl From<isahc::Error> for Error {
+	fn from(e: isahc::Error) -> Self {
+		Self::HTTP(e)
+	}
+}
+
+
 #[derive(Debug, serde::Serialize)]
-pub struct RPCRequest <T> {
+struct RPCRequest <T>
+	where T: serde::Serialize
+{
 	jsonrpc: String,
 	method: String,
 	params: T,
-	id: String
+	id: u64,
 }
 
-#[derive(Debug, Default, serde_derive::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 pub struct RPCError {
-	pub jsonrpc: String,
-	#[serde(skip_deserializing)]
-	pub error: Error,
-	pub id: String
-}
-
-#[derive(Debug, Default, serde_derive::Deserialize)]
-pub struct Error {
 	pub code: String,
 	pub message: String
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum RPCResponse <T> {
-	Success(RPCSuccess<T>),
-	Error(RPCError)
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct RPCSuccess <T> {
-	pub id: String,
+struct RPCResponse <T> {
+	pub id: u64,
 	pub jsonrpc: String,
-	pub result: T
+	pub result: Option<T>,
+	pub error: Option<RPCError>
 }
 
 #[derive(Debug)]
@@ -49,16 +57,19 @@ impl Client {
 		Client { host: String::from(host), id: 1 }
 	}
 
-	fn send<T: serde::Serialize>(&self, method: &str, params: T) -> Response<isahc::Body> {
+	fn send<T: serde::Serialize, R: serde::de::DeserializeOwned>(&self, method: &str, params: T) -> Result<R, Error> {
 		let body = serde_json::to_vec(&RPCRequest {
 			jsonrpc: String::from("2.0"),
 			method: String::from(method),
-			id: String::from("1"),
+			id: 1,
 			params: &params
-		}).unwrap();
+		})?;
 
-		isahc::post(&self.host, body)
-		.unwrap()
+		match isahc::post(&self.host, body)?.json()? {
+			RPCResponse { result: Some(result), error: None, .. } => Ok(result),
+			RPCResponse { result: None, error: Some(error), .. } => Err(Error::RPC(error)),
+			_ => Err(Error::InvalidResponse),
+		}
 	}
 
 	/// Returns a list of addresses owned by client.
@@ -79,14 +90,10 @@ impl Client {
 	/// let result = client.accounts();
 	/// ```
 	pub fn accounts(&self) -> Result<Vec<super::primitives::Account>, Error>{
-		let response = self.send("accounts", ()).json::<RPCResponse<Vec<primitives::Account>>>();
-		match response {
-			Ok(RPCResponse::Success(v)) => Ok(v.result),
-			Ok(RPCResponse::Error(v)) => Err(v.error),
-			Err(_) => panic!("Couldn't deserialize response from server!")
-		}
+		self.send("accounts", ())
 	}
 
+	/*
 	/// Returns the height of most recent block.
 	///
 	/// # Arguments
@@ -457,7 +464,10 @@ impl Client {
 		match response {
 			Ok(RPCResponse::Success(v)) => Ok(v.result),
 			Ok(RPCResponse::Error(v)) => Err(v.error),
-			Err(_) => panic!("Couldn't deserialize response from server!")
+			Err(e) => {
+				eprintln!("Serde error: {:?}", e);
+				panic!("Couldn't deserialize response from server!");
+			}
 		}
 	}
 
@@ -863,4 +873,5 @@ impl Client {
 			Err(_) => panic!("Couldn't deserialize response from server!")
 		}
 	}
+	*/
 }
